@@ -1,5 +1,4 @@
 # Setting working directory and loading libraries----
-setwd("~/Applied Data Science/Thesis")
 
 # import packages
 library(lattice)
@@ -161,57 +160,3 @@ hist(arcsine.C, freq = F, breaks = 30, main = 'Distribution of arcsine transform
 # plot densityplot
 arcsine.dens <- density(arcsine.C)
 lines(arcsine.dens, col = 'red')
-
-
-
-
-
-
-
-
-
-
-## Rubin's rules----
-
-
-## pooled estimates is just the average:
-beta = results$Estimate %>% mean()
-
-# The SE for the pooled regression coefficient estimate is retrieved using Rubin's rules
-Qbar <- results$Estimate %>% mean()
-U <- sum(results$SE**2)/n.imp
-B <- sum((results$Estimate - Qbar)**2)/(n.imp-1)
-se.beta <- sqrt(U + (1+1/n.imp)*B)
-# Inspect
-c(beta=beta,se.beta=se.beta)
-
-
-# univariate amputation with 10 percent missing----
-result <- ampute(testdata, prop = 0.1, patterns=c(0,1,1), mech = 'MAR')
-result$amp$V1
-# inspect missingness patterns
-mypatterns <- result$patterns
-mypatterns
-
-
-# multivariate amputation----
-# add missingesness patterns
-mypatterns[2, 1] <- 0
-mypatterns <- rbind(mypatterns, c(0, 1, 0))
-
-# define frequency of missingness patterns
-myfreq <- c(0.7, 0.1, 0.1, 0.1)
-
-# define weights
-myweights <- result$weights
-myweights[1, ] <- c(0, 0.8, 0.4)
-myweights[3, ] <- c(3.0, 1.0, 0)
-
-#the type of logistic probability distribution that is applied to the weighted sum scores
-
-# Ampute again
-
-result <- ampute(testdata, freq = myfreq, 
-                 patterns = mypatterns, mech = "MAR")
-result
-
