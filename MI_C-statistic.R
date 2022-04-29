@@ -74,8 +74,6 @@ sum(is.na(missingdata$V1)) # 3100 missing values created
 
 ## MI ----
 
-#data = result$amp
-
 N = sum(is.na(missingdata$V1))
 miss = data[is.na(missingdata$V1),]
 n.imp = 100
