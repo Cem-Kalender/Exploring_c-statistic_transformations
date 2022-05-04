@@ -67,10 +67,12 @@ biased.C.CI = boot::boot.ci(biased.C, type = 'perc')$percent[c(4,5)]
 biased = c(biased.C$t0, biased.C.CI[1], biased.C.CI[2])
 biased
 
+# Create empty matrix to store bootstrapped C-statistic estimates
 results = matrix(nrow = n.imp, ncol = 2) %>% data.frame()
 colnames(results) = c('C.statistic', 'SE')
 
 # Impute
+set.seed(5)
 missingdata$V3 = as.factor(missingdata$V3)
 n.imp = 20
 imp = mice(missingdata, n.imp, method = c('norm.nob','norm.nob', 'logreg'), seed = 5) # stochastic
