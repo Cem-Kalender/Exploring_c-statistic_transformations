@@ -62,7 +62,7 @@ write.csv(testdata,"C:\\Users\\surface\\Documents\\Applied Data Science\\Thesis\
 
 amputation = function(data, pattern_list, prop_list, mech_list, probabilities){
     # if the length of the inputs are unequal, return NA
-    len_inputs = lapply(list(pattern_list, prop_list, mech_list, probabilities), length) %>% unique()
+    len_inputs = sapply(list(pattern_list, prop_list, mech_list, probabilities), length) %>% unique()
     if (length(len_inputs) == 1){
         # empty list to store amputations
         amputations = list()
