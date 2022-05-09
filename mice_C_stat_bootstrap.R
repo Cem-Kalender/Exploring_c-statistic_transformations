@@ -48,16 +48,6 @@ n.imp = 20
 missingdata$V3 = as.factor(missingdata$V3)
 imp = mice(missingdata, n.imp, method = c('norm.nob','norm.nob', 'logreg'), seed = 5) # stochastic
 
-# fmri----
-imp_tot$Impnr = factor(rep(1:20, each = 10000))
-
-perf <- psfmi::pool_performance(data=imp_tot, nimp=n.imp, impvar="Impnr", 
-                         formula = V3 ~ V1 + V2, 
-                         cal.plot=TRUE, plot.method="mean", 
-                         groups_cal=20, model_type="binomial")
-
-perf$ROC_pooled
-
 # apply bootstrap function and summarize results
 results = C_stat.bootstrap(imp, nr_boots = 100)
 summary(results)
@@ -66,7 +56,7 @@ summary(results)
 
 ## MEDIAN 
 med = c(median(results$C.statistic), IQR(results$C.statistic))
-median = c('95%.Low' = med[1] - 1.96*med[2]/sqrt(n.imp),Pool3e.C.statistic = med[1], '95%.Up' = med[1] + 1.96*med[2]/sqrt(n.imp))
+median = c('95%.Low' = med[1] - 1.96*med[2]/sqrt(n.imp), Pooled.C.statistic = med[1], '95%.Up' = med[1] + 1.96*med[2]/sqrt(n.imp))
 
 
 ## LOGIT TRANSFORMATION ----
