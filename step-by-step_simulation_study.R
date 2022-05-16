@@ -12,41 +12,34 @@ source('FUNCTIONS.R')
 set.seed(5)
 #options(scipen=999)
 
-## read data
-test.data = read.csv('complete_data.csv', header = T, sep = ',')
-missingdata = read.csv('missingdata.csv', header = T, sep = ',')
-# inspect data
-summary(missingdata)
-
-# Visualize
-ggpubr::ggarrange(
-    test.data %>% ggplot(aes(V1,V2, color = factor(V3))) + geom_point() + geom_smooth(method = 'lm'),
-    na.omit(missingdata) %>% ggplot(aes(V1,V2, color = factor(V3))) + geom_point() + geom_smooth(method = 'lm')
-)
 
 ## SETP BY STEP ----
 set.seed(1)
 testdata = simulate.multivariate()
 
 # determine 'true' C-statistic first
-true.C = boot::boot(test.data,func, R=100)
+true.C = boot::boot(testdata,func, R=100)
 true.C.CI = boot::boot.ci(true.C, type = 'perc')$percent[c(4,5)]
 true = c(true.C.CI[1], true.C$t0, true.C.CI[2])
-
 
 set.seed(1)
 missingdata = amputation(testdata)
 
+# Visualize
+ggpubr::ggarrange(
+    testdata %>% ggplot(aes(V1,V2, color = factor(V3))) + geom_point() + geom_smooth(method = 'lm'),
+    na.omit(missingdata) %>% ggplot(aes(V1,V2, color = factor(V3))) + geom_point() + geom_smooth(method = 'lm')
+)
 
 # Impute
 
-n.imp = 10
+n.imp = 20
 missingdata$V3 = as.factor(missingdata$V3)
 set.seed(1)
 imp = mice(missingdata, n.imp, method = c('pmm','pmm','logreg'), seed = 5)
 
 # apply bootstrap function and summarize results ----
-results = c.stat.bootstrap(imp, nr_boots = 50)
+results = c.stat.bootstrap(imp, nr_boots = 100)
 results
 
 # forest plot
