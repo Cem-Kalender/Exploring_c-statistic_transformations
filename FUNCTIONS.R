@@ -234,7 +234,7 @@ simulation.study = function(repetitions, mech, var, n.imp, nr_boots){
     study.results = parLapply(cl, sims, function(x, method=mech, on=var){
         # determine "true" c-statistic
         set.seed(11)
-        true = boot::boot(x, func, R=50)
+        true = boot::boot(x, func, R=100)
         #true.C.CI = boot::boot.ci(true, type = 'perc')$percent[c(4,5)]
         #true.C = c(true.C.CI[1], true$t0, true.C.CI[2])
         true.C = rep(true$t0, 3)
