@@ -7,8 +7,6 @@ library(mice)
 library(tidyverse)
 source('FUNCTIONS.R')
 
-n.imp = 5 # between-variance
-
 # exectute simulation study
 res = simulation.study.Altman(repetitions = 10000, 
                        n.imp = 30, 
