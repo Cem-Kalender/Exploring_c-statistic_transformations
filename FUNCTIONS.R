@@ -5,16 +5,15 @@ library(mice)
 library(tidyverse)
 
 ## GENERATE DATA ----
-simulate.multivariate <- function(n=1000, mu=c(22, 12, 0), threshold = 0.6, sigma = c(1.0, 0.3, 0.5, 
-                                                                                        0.3, 1.0, 0.5, 
-                                                                                        0.5, 0.5, 1.0), prob=0.9){
+simulate.multivariate <- function(n=1000, mu=c(2, 6, 0), threshold = 0.6, sigma = c(1.0, 0.3, 0.5, 
+                                                                                      0.3, 1.0, 0.5, 
+                                                                                      0.5, 0.5, 1.0), prob=0.9){
     #install.packages("MASS")
     sigma = matrix(sigma,3,3)
     data = MASS::mvrnorm(n = n,mu = mu,Sigma = sigma) %>% as.data.frame()
-    # introduce noise to handle multicollinearity
     
     # linear model with sigmoid transformation of linear predictors
-    mod = lm(V3~V2+V1, data = data)
+    mod = lm(V3~., data = data)
     y = 1/(1+exp(mod$fitted.values))
     # introduce randomness/noise by means of bernoulli trial
     data$V3 = ifelse(y>threshold,rbinom(nrow(data[y>threshold,]), size = 1, prob), 0)
@@ -27,10 +26,10 @@ simulate.multivariate <- function(n=1000, mu=c(22, 12, 0), threshold = 0.6, sigm
 amputation = function(data, method='MAR', on ='covariates', prop = 0.9){
     if (method == 'MAR' && on == 'covariates'){
         ampdata = mice::ampute(data, prop = prop, patterns =  rbind(c(0,1,1), c(1,0,1)), 
-               mech = 'MAR', weights = rbind(c(0,1,0),c(0,0,1)), freq = c(.5,.5), bycases = T)$amp}
+                               mech = 'MAR', weights = rbind(c(0,5,0),c(0,0,5)), freq = c(.5,.5), bycases = T)$amp}
     else if (method == 'MNAR' && on == 'outcome'){
         ampdata = mice::ampute(data, prop = prop, patterns =  c(1,1,0), 
-                         mech = 'MAR', bycases = T)$amp}
+                               mech = 'MAR', bycases = T)$amp}
     else if (method == 'MAR' && on == 'outcome'){
         ampdata = mice::ampute(data, prop = prop, patterns =  c(1,1,0), 
                                mech = 'MAR', weights = rbind(c(.5,.5, 0)), bycases = T)$amp}
@@ -40,12 +39,32 @@ amputation = function(data, method='MAR', on ='covariates', prop = 0.9){
     return(ampdata)
 }
 
+imputation = function(missingdata, n.imp){
+    invisible(capture.output(imp <- mice(missingdata, n.imp, method = c('pmm','pmm','logreg'))))
+    pred <- make.predictorMatrix(imp$data)
+    pred[c("V1", "V2"), "V2"] <- 0
+    invisible(capture.output(imp <- mice(imp$data, n.imp, pred = pred, maxit = n.imp+10,
+                                         print = FALSE, seed = 11)))
+    # add extra iterations just to be sure that the variability between the trace lines,
+    # should equal the variability within each of the lines
+    return(imp)
+}
+
+
 #define function for bootstrapping----
 
 func = function(data, ind){
-    fit = glm(V3~V1+V2,family = 'binomial', data=data[ind,])
+    fit = glm(factor(V3)~.,family = 'binomial', data=data[ind,])
     #pROC::auc(fit$y, fit$fitted.values, quiet = T)
     DescTools::Cstat(fit)
+}
+
+true.c.stat = function(data){
+    testdata = simulate.multivariate(10000)
+    fit = glm(factor(V3)~.,family = binomial, data=data)
+    pred = predict(fit, newdata=testdata, type= 'response')
+    auc = pROC::roc(testdata$V3, pred, quiet = T)$auc[[1]]
+    return(auc)
 }
 
 # NON-PARAMETRIC BOOTSTRAP for determining within-variance of C-statistic ----
@@ -80,28 +99,37 @@ pooled_se <- function(est, se, n.imp){
 }
 
 logit.transform.pool = function(results, n.imp){
-    logit =  log(results/(1 - results))
+    #  Wald methode te gebruiken VAR(logitauc) =  [(logit (cub) − logit (clb)) /(2 × 1.96)]^ 2
+    logit = metamisc::ccalc(cstat = results$C, cstat.cilb = results$`95%lb`,
+                           cstat.ciub = results$`95%ub`, g = "log(cstat/(1-cstat))")
     # calculate logit pooled estimate
-    est_c_se_log = results$SE / (results$C.statistic * (1-results$C.statistic))
-    logit.pooled.se = pooled_se(logit$C.statistic, est_c_se_log, n.imp=n.imp)
-    logit.ub = exp(mean(logit$C.statistic) + (logit.pooled.se[2]*logit.pooled.se[1])) /
-        (1 + exp(mean(logit$C.statistic) + (logit.pooled.se[2]*logit.pooled.se[1])))
+    est_c_se_log = results$SE / (results$C * (1-results$C))
     
-    logit.lb = exp(mean(logit$C.statistic) - (logit.pooled.se[2]*logit.pooled.se[1])) /
-        (1 + exp(mean(logit$C.statistic) - (logit.pooled.se[2]*logit.pooled.se[1])))
+    # wald
+
+    logit.pooled.se = pooled_se(logit$theta, est_c_se_log , n.imp=n.imp)
+    
+    logit.ub = exp(mean(logit$theta) + (logit.pooled.se[2]*logit.pooled.se[1])) /
+        (1 + exp(mean(logit$theta) + (logit.pooled.se[2]*logit.pooled.se[1])))
+    
+    logit.lb = exp(mean(logit$theta) - (logit.pooled.se[2]*logit.pooled.se[1])) /
+        (1 + exp(mean(logit$theta) - (logit.pooled.se[2]*logit.pooled.se[1])))
     
     logit.C = c('95%.Low' = logit.lb,
-                Pooled.C.statistic = exp(mean(logit$C.statistic))/(1 + exp(mean(logit$C.statistic))),
+                Pooled.C.statistic = exp(mean(logit$theta))/(1 + exp(mean(logit$theta))),
                 '95%.Up' =logit.ub)
     return(logit.C)
 }
 
 regular.pool = function(results, n.imp){
+    results = metamisc::ccalc(cstat = results$C, cstat.cilb = results$`95%lb`,
+                           cstat.ciub = results$`95%ub`)
     # calculate regular pooled estimate
-    pooled.se = pooled_se(results$C.statistic, results$SE, n.imp=n.imp)
-    reg.C = c('95%.Low' = mean(results$C.statistic) - (pooled.se[2]*pooled.se[1]/sqrt(length(results))),
-              Pooled.C.statistic = mean(results$C.statistic),
-              '95%.Up' = mean(results$C.statistic) + (pooled.se[2]*pooled.se[1]/sqrt(length(results))))
+    #VAR = ((results$ciub-results$cilb) /(2*1.96))**2
+    pooled.se = pooled_se(results$theta, results$theta.se, n.imp=n.imp)
+    reg.C = c('95%.Low' = mean(results$theta) - (pooled.se[2]*pooled.se[1]/sqrt(length(results))),
+              Pooled.C.statistic = mean(results$theta),
+              '95%.Up' = mean(results$theta) + (pooled.se[2]*pooled.se[1]/sqrt(length(results))))
     return(reg.C)
 }
 
@@ -124,54 +152,15 @@ arcsine.pool = function(results, n.imp){
     return(arcsin.C)
 }
 
-# simulation study function (50% multivariate MAR/ imputation pmm)
-simulation.study.loop = function(repetitions, n.imp, imp.method='pmm', nr_boots, mech = 'MAR', var = 'covariates'){
-    #DEFAULT: Multivariate MAR
-    
-    # simulate datasets
-    set.seed(11)
-    sims = replicate(repetitions, simulate.multivariate(), simplify = FALSE)
-    # empy list to store results
-    study.results = list()
-    # perform study in every simulated data set
-    for (i in 1:length(sims)){
-        
-        cat(crayon::blue(paste('SIMULATION',i,'\n\n')))
-        
-        # Ampute
-        cat(crayon::red('Amputing...\n'))
-        set.seed(11)
-        missingdata = amputation(sims[[i]], method=mech, on=var)
-        missingdata$V3 = as.factor(missingdata$V3) # change outcome to factor
-        
-        # impute with predictive mean matching and logistic regression
-        cat(crayon::red('Imputing...\n\n'))
-        set.seed(11)
-        invisible(capture.output(imp <- mice::mice(missingdata, n.imp, method = c(imp.method, imp.method, 'logreg'), seed = 5)))
-     
-        # calculate c stat complete data
-        cat(crayon::white('Calculating true c-statistic...\n'))
-        set.seed(11)
-        true = boot::boot(sims[[i]], func, R=100)
-        true.C.CI = boot::boot.ci(true, type = 'perc')$percent[c(4,5)]
-        true.C = c(true.C.CI[1], true$t0, true.C.CI[2])
-        
-        # calculate bootstrapped c stat
-        cat(crayon::white('Calculating bootstrapped c-statistic...\n\n'))
-        set.seed(11)
-        results = c.stat.bootstrap(imp, nr_boots = nr_boots)
-    
-        # regular c-stat
-        logit.C = logit.transform.pool(results)
-        reg.C = regular.pool(results)
-        
-        # combine estimates
-        cat(crayon::green('Combining results...\n\n'))
-        combined = rbind(logit.C, reg.C, true.C) %>% data.frame()
-        colnames(combined) = c('95%lb', 'C', '95%ub')
-        study.results[[i]] = combined
-    }
-    return (study.results)
+# transform and pool
+transform_and_pool = function(results, true.c, n.imp){
+    logit = logit.transform.pool(results, n.imp)
+    arcsine = arcsine.pool(results, n.imp)
+    regular = regular.pool(results, n.imp)
+    true = rep(true.c, 3)
+    combined = rbind(regular, logit, arcsine, true) %>% data.frame()
+    colnames(combined) = c('95%lb', 'C', '95%ub')
+    return(combined)
 }
 
 # forestplot function
@@ -179,11 +168,11 @@ forestplot = function(study.results){
     plots = list()
     ## forest plot
     for (i in 1:length(study.results)){
-
-        plots[[i]] = metafor::forest(slab = c('Regular','Logit', 'Arcsine', 'True'),
-                                     x = study.results[[i]]$C, 
-                                     ci.lb = study.results[[i]]$`95%lb`,
-                                     ci.ub = study.results[[i]]$`95%ub`,
+        
+        plots[[i]] = metafor::forest(slab = c('Logit', 'Regular', 'True'),
+                                     x = study.results[[i]][,2], 
+                                     ci.lb = study.results[[i]][,1],
+                                     ci.ub = study.results[[i]][,3],
                                      refline = study.results[[i]][3,2], xlab = "C-statistic")
         title(paste("Simulation", i), line = -3)
     }
@@ -196,24 +185,20 @@ convergence.rate = function(study.results){
     cr.regular = 0
     cr.arcsine = 0
     # does the true c lie within the intervals?
+    true.C = study.results[[1]][3,2]
     for (i in 1:length(study.results)){
-        true.C = study.results[[i]][4,2]
+        
         if (true.C >= study.results[[i]][1,1] & true.C <= study.results[[i]][1,3]){
-            cr.regular = cr.regular + 1
+            cr.logit = cr.logit+ 1
         }
         if (true.C >= study.results[[i]][2,1] & true.C <= study.results[[i]][2,3]){
-            cr.logit = cr.logit + 1
-        }
-        if (true.C >= study.results[[i]][3,1] & true.C <= study.results[[i]][3,3]){
-            cr.arcsine = cr.arcsine + 1
+            cr.regular = cr.regular + 1
         }
     }
     # calculate proportion of times the c-statistic lies within the boostrap intervals
-    cr.logit = cr.logit/length(study.results)
-    cr.regular = cr.regular/length(study.results)
-    cr.arcsine = cr.arcsine/length(study.results)
-    return(list('regular.pooled'= cr.regular, 'logit.transformed' = cr.logit,
-                'arcsine.transformed' = cr.arcsine))
+    cr.logit = paste0(cr.logit/length(study.results)*100, '%')
+    cr.regular = paste0(cr.regular/length(study.results)*100, '%')
+    return(list('regular.pooled'= cr.regular, 'logit.transformed' = cr.logit))
 }
 
 # Parallel computation simulation study
@@ -227,24 +212,22 @@ simulation.study = function(repetitions, mech, var, n.imp, nr_boots){
     # load libraries and functions
     clusterEvalQ(cl, {library(mice); library(tidyverse); library(boot)})
     clusterExport(cl, c("amputation", "c.stat.bootstrap", "logit.transform.pool", 
-                        "regular.pool", "pooled_se", "func", "arcsine.pool",
-                        'n.imp','nr_boots'), 
+                        "regular.pool", "pooled_se",'true.c.stat',"simulate.multivariate", "func", "arcsine.pool",
+                        'n.imp','nr_boots', 'imputation'), 
                   envir=environment())
     # apply parallel computing
     study.results = parLapply(cl, sims, function(x, method=mech, on=var){
         # determine "true" c-statistic
         set.seed(11)
-        true = boot::boot(x, func, R=100)
-        #true.C.CI = boot::boot.ci(true, type = 'perc')$percent[c(4,5)]
-        #true.C = c(true.C.CI[1], true$t0, true.C.CI[2])
-        true.C = rep(true$t0, 3)
+        true = true.c.stat(x)
+        true.C = rep(true, 3)
         set.seed(11)
         # create missing data according to user-specified mechanism
         missingdata = amputation(x, method, on)
         missingdata$V3 = as.factor(missingdata$V3) # change outcome to factor
         # Impute
         set.seed(11)
-        invisible(capture.output(imp <- mice::mice(missingdata, n.imp, method = c('pmm', 'pmm', 'logreg'), seed = 5)))
+        imp = imputation(missingdata, n.imp)
         # non-parametric bootstrapping
         set.seed(11)
         result = c.stat.bootstrap(imp, nr_boots = nr_boots)
@@ -261,3 +244,156 @@ simulation.study = function(repetitions, mech, var, n.imp, nr_boots){
     return(study.results)
 }
 
+
+
+# Parallel computation simulation study
+simulation.study.Altman = function(repetitions, mech, var, n.imp){
+    #install.packages("parallel")
+    library(parallel)
+    # create complete data sets
+    sims = replicate(repetitions, simulate.multivariate(), simplify = FALSE)
+    # create clusters for parallel computing
+    cl <- makeCluster(getOption("cl.cores", detectCores()))
+    # load libraries and functions
+    clusterEvalQ(cl, {library(mice); library(tidyverse); library(boot); library(auctestr)})
+    clusterExport(cl, c("amputation", "logit.transform.pool", 
+                        "regular.pool", "pooled_se",'true.c.stat',"simulate.multivariate", 
+                        "arcsine.pool", 'n.imp',"transform_and_pool", 'imputation'), 
+                  envir=environment())
+    # apply parallel computing
+    study.results = parLapply(cl, sims, function(x, method=mech, on=var){
+        # determine "true" c-statistic
+        # determine 'true' C-statistic first
+        set.seed(11)
+        true.c = true.c.stat(x)
+        missingdata = amputation(x, method = 'MAR', on = 'covariates')
+        missingdata$V3 = as.factor(missingdata$V3)
+        # split missingdata into development and validation set
+        smp = sample(seq_len(floor(nrow(missingdata)*0.5)), replace = F)
+        trainset = missingdata[smp,]
+        testset =  missingdata[-smp,]
+        # Impute
+        train.imp = imputation(trainset, n.imp)
+        test.imp = imputation(testset, n.imp)
+        
+        # fit a model on each imputed data set (SHOULD I USE A SHRINKAGE FACTOR?)
+        trainset = complete(train.imp, 'long')
+        testset = complete(test.imp, 'long')
+        
+        # develop model by combining coefficients with Rubin's rules
+        model.list = lapply(1:train.imp$m, function(x){
+            d = subset(trainset, .imp == x)
+            d = d %>% select(V3,V2,V1)
+            fit = glm(factor(V3)~.,family = 'binomial', data=d)})
+        
+        # combine into a single model
+        final.model = summary(pool(model.list,  rule = "rubin1987"))
+        
+        # Calculate predicted risk per model on complete data set
+        #perf.on.complete = sapply(model.list, function(x){
+        #pred = predict(x, newdata=testdata, type = 'response')
+        #auc = pROC::roc(testdata$V3, pred, quiet = T)$auc[[1]]
+        #return(auc)
+        #})
+        
+        # Calculate predicted risk of final model on validation data set
+        testlist <- lapply(1:test.imp$m, function(x){subset(testset, .imp == x)})
+        
+        # prepare data
+        validation.data <- lapply(testlist, function(x){
+            model.matrix(formula(paste0("~", c('V2+V1'))), data=x)})
+        
+        
+        predictions = lapply(validation.data, function(x){
+            predictions = NULL
+            for (i in 1:nrow(x)){
+                pred = 1/(1+exp(x[i,] %*%  final.model[c(1,2,3),2]))
+                predictions = append(predictions, pred)
+            }
+            return (predictions)
+        })
+        
+        perf.on.validation = lapply(1:n.imp, function(x){
+            pred = predictions[[x]]
+            test = testlist[[x]]
+            auc = pROC::roc(test$V3, pred, quiet = T)$auc[[1]]
+            # is the SE unbiased?
+            #se.auc = auctestr::se_auc(auc, n_p = sum(test$V3==1), n_n = sum(test$V3==0))
+            auc.ci = pROC::ci.auc(test$V3, pred, quiet = T)
+            #auc_and_se = cbind('C'=auc, auc.ci)
+            return(auc.ci)
+        })
+        
+        # Results
+        results = data.frame(matrix(unlist(perf.on.validation), nrow=length(perf.on.validation), byrow=TRUE))
+        colnames(results) <- c('95%lb', 'C', '95%ub')
+        # (Transform and) pool
+        logit.ci = logit.transform.pool(results, n.imp)
+        regular.ci = regular.pool(results, n.imp)
+        true.ci = rep(true.c, 3)
+        
+        study.result = rbind(logit.ci, regular.ci, true.ci)
+    })
+    stopCluster(cl)
+    return(study.results)
+}
+
+test.on.developmentset = function(model.list){
+    c = lapply(model.list, function(x){
+        auc.ci = pROC::ci.auc(x$y, x$fitted.values, quiet = T)
+        return(auc.ci)
+    })
+    # reformat
+    c = data.frame(matrix(unlist(c), nrow=length(c), byrow=TRUE))
+    colnames(c) <- c('95%lb', 'C', '95%ub')
+    
+    # Tranform and pool results
+    logit.ci = logit.transform.pool(c, n.imp)
+    regular.ci = regular.pool(c, n.imp)
+    
+    # Combine
+    study.result = rbind(logit.ci, regular.ci)
+    return(study.result)
+}
+test.performance = function(imp, complete.set, final.model, n.imp){
+    alist <- lapply(1:imp$m, function(x){subset(complete.set, .imp == x)})
+    
+    # prepare data
+    validation.data <- lapply(alist, function(x){
+        model.matrix(formula(paste0("~", c('V2+V1'))), data=x)})
+    
+    
+    predictions = lapply(validation.data, function(x){
+        predictions = NULL
+        for (i in 1:nrow(x)){
+            pred = 1/(1+exp(x[i,] %*%  final.model[c(1,2,3),2]))
+            predictions = append(predictions, pred)
+        }
+        return (predictions)
+    })
+    
+    perf.on.validation = lapply(1:n.imp, function(x){
+        pred = predictions[[x]]
+        test = alist[[x]]
+        auc = pROC::roc(test$V3, pred, quiet = T)$auc[[1]]
+        # is the SE unbiased?
+        #se.auc = auctestr::se_auc(auc, n_p = sum(test$V3==1), n_n = sum(test$V3==0))
+        auc.ci = pROC::ci.auc(test$V3, pred, quiet = T)
+        #auc_and_se = cbind('C'=auc, auc.ci)
+        return(auc.ci)
+    })
+    
+    # Results
+    results = data.frame(matrix(unlist(perf.on.validation), nrow=length(perf.on.validation), byrow=TRUE))
+    colnames(results) <- c('95%lb', 'C', '95%ub')
+    
+    # Tranform and pool results
+    logit.ci = logit.transform.pool(results, n.imp)
+    regular.ci = regular.pool(results, n.imp)
+    
+    # Combine
+    study.result = rbind(logit.ci, regular.ci)
+    
+    return(study.result)
+    
+}
