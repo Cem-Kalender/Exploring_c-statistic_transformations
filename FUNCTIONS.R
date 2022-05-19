@@ -5,21 +5,36 @@ library(mice)
 library(tidyverse)
 
 ## GENERATE DATA ----
-simulate.multivariate <- function(n=1000, mu=c(2, 6, 0), threshold = 0.6, sigma = c(1.0, 0.3, 0.5, 
-                                                                                      0.3, 1.0, 0.5, 
-                                                                                      0.5, 0.5, 1.0), prob=0.9){
-    #install.packages("MASS")
-    sigma = matrix(sigma,3,3)
-    data = MASS::mvrnorm(n = n,mu = mu,Sigma = sigma) %>% as.data.frame()
+simulate.multivariate <- function(n=10000, mu=c(2, 6), sd=c(0.5, 0.8), intercept = -7){
     
-    # linear model with sigmoid transformation of linear predictors
-    mod = lm(V3~., data = data)
-    y = 1/(1+exp(mod$fitted.values))
-    # introduce randomness/noise by means of bernoulli trial
-    data$V3 = ifelse(y>threshold,rbinom(nrow(data[y>threshold,]), size = 1, prob), 0)
-    data$V3[data$V3==0] = rbinom(length(data$V3[data$V3==0]), size = 1, prob = 1-prob)
-    # binary outcome variable as as factor
-    return(data)
+    # continuous variables could be e.g., blood pressure
+    continuous_var_1 = rnorm(n = n, mean = mu[1], sd = sd[1])
+    continuous_var_2 = rnorm(n = n, mean = mu[2], sd = sd[2])
+    # Create linear combination 
+    # with or without bias as intercept?
+    lin_combination = intercept + continuous_var_1 + continuous_var_2
+    
+    # Probability for response variable to be 1
+    # Note: Due to application for logistic regression, use inverse logit function
+    prob_observed_outcome = 1/(1+exp(-lin_combination))
+    
+    # Check that values are not approaching either 0 or 1 to avoid too deterministic approach
+    summary(prob_observed_outcome)
+    
+    # Binary outcome variable as Bernoulli response variable
+    # e.g., diabetes positive (1) or negative (0)
+    # Desired probability for outcome_var = 1 between 20% and 30% to consider imbalance
+    outcome_var = rbinom(n = n, size = 1, prob = prob_observed_outcome)
+    
+    # Combine it to a data frame
+    df_complete = data.frame( 
+        continuous_var_1,
+        continuous_var_2,
+        outcome_var
+    )
+    colnames(df_complete) <- c('V1', 'V2', 'V3')
+    return(df_complete)
+
 }
 ## AMPUTE WITH MICE ----
 
